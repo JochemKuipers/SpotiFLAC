@@ -1,11 +1,10 @@
-import asyncio
-import json
-import os
 import re
 import time
+
 import requests
 from mutagen.flac import FLAC, Picture
 from mutagen.id3 import PictureType
+
 
 class ProgressCallback:
     def __call__(self, current, total):
@@ -377,7 +376,7 @@ def main():
     
     query = "APT."
     isrc = "USAT22409172"
-    output_dir = "."
+    output_dir = ".."
     
     try:
         downloaded_file = downloader.download(query, isrc, output_dir)

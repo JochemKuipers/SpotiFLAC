@@ -1,11 +1,12 @@
-import requests
-import time
-import os
 import re
+import time
 from datetime import datetime
+from random import randrange
+
+import requests
 from mutagen.flac import FLAC, Picture
 from mutagen.id3 import PictureType
-from random import randrange
+
 
 def get_random_user_agent():
     return f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_{randrange(11, 15)}_{randrange(4, 9)}) AppleWebKit/{randrange(530, 537)}.{randrange(30, 37)} (KHTML, like Gecko) Chrome/{randrange(80, 105)}.0.{randrange(3000, 4500)}.{randrange(60, 125)} Safari/{randrange(530, 537)}.{randrange(30, 36)}"
@@ -227,7 +228,7 @@ def main():
     downloader = QobuzDownloader()
     
     isrc = "USAT22409172"
-    output_dir = "."
+    output_dir = ".."
     
     try:
         downloaded_file = downloader.download(isrc, output_dir)

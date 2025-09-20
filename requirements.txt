@@ -1,0 +1,8 @@
+pyotp
+packaging
+pyqt6-sip
+requests
+mutagen
+urllib3
+PyQt6
+PyQtDarkTheme2
