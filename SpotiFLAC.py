@@ -1535,14 +1535,20 @@ class SpotiFLACGUI(QWidget):
         self.settings.setValue('spotify_client_id', self.spotify_client_id)
         self.settings.setValue('spotify_client_secret', self.spotify_client_secret)
         self.settings.sync()
-        # Enable fetch button if both credentials are filled and button is disabled
+        # Enable fetch button and connect it if both credentials are filled
         if (
             self.spotify_client_id
             and self.spotify_client_secret
             and hasattr(self, "fetch_btn")
-            and not self.fetch_btn.isEnabled()
         ):
             self.fetch_btn.setEnabled(True)
+            # Ensure the fetch button is connected to fetch_spotify_account if in Account mode
+            if hasattr(self, "spotify_type_combo") and self.spotify_type_combo.currentText() == "Spotify Account:":
+                try:
+                    self.fetch_btn.clicked.disconnect()
+                except Exception:
+                    pass
+                self.fetch_btn.clicked.connect(self.fetch_spotify_account)
     
     def save_settings(self):
         self.settings.setValue('output_path', self.output_dir.text().strip())
