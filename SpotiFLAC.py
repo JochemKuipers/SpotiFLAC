@@ -393,6 +393,15 @@ class ServiceComboBox(QComboBox):
         self.setItemDelegate(StatusIndicatorDelegate())
         self.setup_items()
         
+        self.qobuz_status_checker = QobuzStatusChecker()
+        self.qobuz_status_checker.status_updated.connect(self.update_qobuz_service_status) 
+        self.qobuz_status_checker.error.connect(lambda e: print(f"Qobuz status check error: {e}")) 
+        self.qobuz_status_checker.start()
+        
+        self.qobuz_status_timer = QTimer(self)
+        self.qobuz_status_timer.timeout.connect(self.refresh_qobuz_status) 
+        self.qobuz_status_timer.start(60000)
+        
         self.tidal_status_checker = TidalStatusChecker()
         self.tidal_status_checker.status_updated.connect(self.update_tidal_service_status) 
         self.tidal_status_checker.error.connect(lambda e: print(f"Tidal status check error: {e}")) 
@@ -476,6 +485,19 @@ class ServiceComboBox(QComboBox):
     def currentData(self, role=Qt.ItemDataRole.UserRole + 1):
         return super().currentData(role)
 
+    def update_qobuz_service_status(self, is_online):
+        self.update_service_status('qobuz', is_online)
+        
+    def refresh_qobuz_status(self):
+        if hasattr(self, 'qobuz_status_checker') and self.qobuz_status_checker.isRunning():
+            self.qobuz_status_checker.quit()
+            self.qobuz_status_checker.wait()
+            
+        self.qobuz_status_checker = QobuzStatusChecker() 
+        self.qobuz_status_checker.status_updated.connect(self.update_qobuz_service_status)
+        self.qobuz_status_checker.error.connect(lambda e: print(f"Qobuz status check error: {e}")) 
+        self.qobuz_status_checker.start()
+
     def update_qobuz_status(self, is_online):
         for i in range(self.count()):
             service_id = self.itemData(i, Qt.ItemDataRole.UserRole + 1)
@@ -493,7 +515,7 @@ class ServiceComboBox(QComboBox):
 class SpotiFLACGUI(QWidget):
     def __init__(self):
         super().__init__()
-        self.current_version = "4.6"
+        self.current_version = "4.7"
         self.tracks = []
         self.all_tracks = []  
         self.reset_state()
