@@ -6,3 +6,4 @@ mutagen
 urllib3
 PyQt6
 PyQtDarkTheme2
+spotipy

@@ -12,16 +12,17 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QUrl, QTimer, QTime, QSettings
 from PyQt6.QtGui import QIcon, QTextCursor, QDesktopServices, QPixmap, QBrush
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from PyQt6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
+    QApplication, QListWidgetItem, QMessageBox, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
     QLabel, QFileDialog, QListWidget, QTextEdit, QTabWidget, QButtonGroup, QRadioButton,
     QAbstractItemView, QProgressBar, QCheckBox, QDialog,
-    QDialogButtonBox, QComboBox, QStyledItemDelegate
+    QDialogButtonBox, QComboBox, QStyledItemDelegate, QTreeWidget, QTreeWidgetItem
 )
 from packaging import version
 
 from Services.deezerDL import DeezerDownloader
 from Services.qobuzAutoDL import QobuzDownloader as QobuzAutoDownloader
 from Services.tidalDL import TidalDownloader
+from Services.spotify import Spotify
 from Utils.getMetadata import get_filtered_data, parse_uri, SpotifyInvalidUrlException
 
 
@@ -36,6 +37,45 @@ class Track:
     id: str
     isrc: str = ""
     release_date: str = ""
+
+class SpotifyPlaylistFetchWorker(QThread):
+    finished = pyqtSignal(list, dict)  # playlists, user_info
+    progress = pyqtSignal(int)
+    error = pyqtSignal(str)
+    
+    def __init__(self, client_id, client_secret):
+        super().__init__()
+        self.client_id = client_id
+        self.client_secret = client_secret
+        
+    def run(self):
+        try:
+            spotify = Spotify(self.client_id, self.client_secret)
+            user_info = spotify.get_user()
+            playlists = spotify.get_user_playlists(progress_callback=self.progress.emit)
+            self.finished.emit(playlists, user_info)
+        except Exception as e:
+            self.error.emit(f'Failed to fetch playlists: {str(e)}')
+
+class SpotifyPlaylistTracksWorker(QThread):
+    finished = pyqtSignal(list, dict)  # tracks, playlist_info
+    progress = pyqtSignal(int)
+    error = pyqtSignal(str)
+    
+    def __init__(self, client_id, client_secret, playlist_id):
+        super().__init__()
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.playlist_id = playlist_id
+        
+    def run(self):
+        try:
+            spotify = Spotify(self.client_id, self.client_secret)
+            tracks = spotify.get_playlist_tracks(self.playlist_id, progress_callback=self.progress.emit)
+            playlist_info = spotify.get_playlist(self.playlist_id)
+            self.finished.emit(tracks, playlist_info)
+        except Exception as e:
+            self.error.emit(f'Failed to fetch playlist tracks: {str(e)}')
 
 class MetadataFetchWorker(QThread):
     finished = pyqtSignal(dict)
@@ -534,6 +574,11 @@ class SpotiFLACGUI(QWidget):
         self.track_list_format = self.settings.value('track_list_format', 'track_artist_date_duration')
         self.date_format = self.settings.value('date_format', 'dd_mm_yyyy')
         
+        # Spotify account credentials
+        self.spotify_client_id = self.settings.value('spotify_client_id', '')
+        self.spotify_client_secret = self.settings.value('spotify_client_secret', '')
+        self.current_playlist_id = None
+        
         self.elapsed_time = QTime(0, 0, 0)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_timer)
@@ -601,6 +646,12 @@ class SpotiFLACGUI(QWidget):
             self.search_input.clear()
         if hasattr(self, 'search_widget'):
             self.search_widget.hide()
+        if hasattr(self, 'playlist_tree'):
+            self.playlist_tree.clear()
+            self.playlist_tree.hide()
+        if hasattr(self, 'playlist_fetch_controls'):
+            self.playlist_fetch_controls.hide()
+        self.track_list.show()
 
     def initUI(self):
         self.setWindowTitle('SpotiFLAC')
@@ -620,8 +671,10 @@ class SpotiFLACGUI(QWidget):
 
     def setup_spotify_section(self):
         spotify_layout = QHBoxLayout()
-        spotify_label = QLabel('Spotify URL:')
-        spotify_label.setFixedWidth(100)
+        self.spotify_type_combo = QComboBox()
+        self.spotify_type_combo.addItems(['Spotify URL:', 'Spotify Account:'])
+        self.spotify_type_combo.setFixedWidth(120)
+        self.spotify_type_combo.currentTextChanged.connect(self.on_spotify_type_changed)
         
         self.spotify_url = QLineEdit()
         self.spotify_url.setPlaceholderText("Enter Spotify URL")
@@ -634,10 +687,43 @@ class SpotiFLACGUI(QWidget):
         self.fetch_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.fetch_btn.clicked.connect(self.fetch_tracks)
         
-        spotify_layout.addWidget(spotify_label)
+        spotify_layout.addWidget(self.spotify_type_combo)
         spotify_layout.addWidget(self.spotify_url)
         spotify_layout.addWidget(self.fetch_btn)
         self.main_layout.addLayout(spotify_layout)
+
+    def on_spotify_type_changed(self, text):
+        """Handle dropdown selection change to enable/disable textbox"""
+        if text == 'Spotify Account:':
+            self.spotify_url.setEnabled(False)
+            self.spotify_url.setPlaceholderText("Account mode - textbox disabled")
+            try:
+                self.fetch_btn.clicked.disconnect()
+            except:
+                pass
+
+            # Check if Spotify credentials are filled in the settings
+            client_id = self.settings.value('spotify_client_id', '')
+            client_secret = self.settings.value('spotify_client_secret', '')
+            if not client_id or not client_secret:
+                QMessageBox.warning(self, "Spotify Credentials Required", 
+                                    "Please enter your Spotify Client ID and Client Secret in the Settings tab before using Account mode.")
+                # Optionally, switch to the settings tab if available
+                if hasattr(self, 'tab_widget') and hasattr(self, 'settings_tab'):
+                    self.tab_widget.setCurrentWidget(self.settings_tab)
+                # Disable fetch button until credentials are filled
+                self.fetch_btn.setEnabled(False)
+            else:
+                self.fetch_btn.setEnabled(True)
+                self.fetch_btn.clicked.connect(self.fetch_spotify_account)
+        else:  # Spotify URL:
+            self.spotify_url.setEnabled(True)
+            self.spotify_url.setPlaceholderText("Enter Spotify URL")
+            try:
+                self.fetch_btn.clicked.disconnect()
+            except:
+                pass
+            self.fetch_btn.clicked.connect(self.fetch_tracks)
 
     def filter_tracks(self):
         search_text = self.search_input.text().lower().strip()
@@ -746,6 +832,39 @@ class SpotiFLACGUI(QWidget):
         self.setup_info_widget()
         dashboard_layout.addWidget(self.info_widget)
 
+        # Playlist tree view (for account mode)
+        self.playlist_tree = QTreeWidget()
+        self.playlist_tree.setHeaderLabels(['Playlists'])
+        self.playlist_tree.setColumnCount(1)
+        self.playlist_tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.playlist_tree.itemDoubleClicked.connect(lambda item, col: self.start_playlist_fetch_queue([item]))
+        self.playlist_tree.hide()
+        dashboard_layout.addWidget(self.playlist_tree)
+
+        # Fetch controls for playlists
+        self.playlist_fetch_controls = QWidget()
+        playlist_fetch_layout = QHBoxLayout(self.playlist_fetch_controls)
+        playlist_fetch_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.fetch_selected_playlists_btn = QPushButton('Fetch Selected Playlists')
+        self.fetch_all_playlists_btn = QPushButton('Fetch All Playlists')
+        
+        for btn in [self.fetch_selected_playlists_btn, self.fetch_all_playlists_btn]:
+            btn.setMinimumWidth(160)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        self.fetch_selected_playlists_btn.clicked.connect(self.fetch_selected_playlists)
+        self.fetch_all_playlists_btn.clicked.connect(self.fetch_all_playlists)
+        
+        playlist_fetch_layout.addStretch()
+        playlist_fetch_layout.addWidget(self.fetch_selected_playlists_btn)
+        playlist_fetch_layout.addSpacing(8)
+        playlist_fetch_layout.addWidget(self.fetch_all_playlists_btn)
+        playlist_fetch_layout.addStretch()
+        
+        self.playlist_fetch_controls.hide()
+        dashboard_layout.addWidget(self.playlist_fetch_controls)
+
         self.track_list = QListWidget()
         self.track_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         dashboard_layout.addWidget(self.track_list)
@@ -753,6 +872,11 @@ class SpotiFLACGUI(QWidget):
         self.setup_track_buttons()
         dashboard_layout.addLayout(self.btn_layout)
         dashboard_layout.addWidget(self.single_track_container)
+
+        # (Deprecated) internal results tabs - no longer used for multi-playlist view
+        self.playlist_results_tabs = QTabWidget()
+        self.playlist_results_tabs.hide()
+        dashboard_layout.addWidget(self.playlist_results_tabs)
 
         dashboard_tab.setLayout(dashboard_layout)
         self.tab_widget.addTab(dashboard_tab, "Dashboard")
@@ -1093,6 +1217,50 @@ class SpotiFLACGUI(QWidget):
         auth_layout.addLayout(service_fallback_layout)
         
         settings_layout.addWidget(auth_group)
+
+        # Spotify Account Settings
+        spotify_group = QWidget()
+        spotify_layout = QVBoxLayout(spotify_group)
+        spotify_layout.setSpacing(2)
+        spotify_layout.setContentsMargins(0, 0, 0, 0)
+        
+        spotify_label = QLabel('Spotify Account (for Account Mode)')
+        spotify_label.setStyleSheet("font-weight: bold; margin-top: 8px; margin-bottom: 5px;")
+        spotify_layout.addWidget(spotify_label)
+        
+        # Client ID
+        client_id_layout = QHBoxLayout()
+        client_id_label = QLabel('Client ID:')
+        client_id_label.setFixedWidth(80)
+        self.spotify_client_id_input = QLineEdit()
+        self.spotify_client_id_input.setPlaceholderText('Enter Spotify Client ID')
+        self.spotify_client_id_input.setText(self.spotify_client_id)
+        self.spotify_client_id_input.textChanged.connect(self.save_spotify_credentials)
+        client_id_layout.addWidget(client_id_label)
+        client_id_layout.addWidget(self.spotify_client_id_input)
+        spotify_layout.addLayout(client_id_layout)
+        
+        # Client Secret
+        client_secret_layout = QHBoxLayout()
+        client_secret_label = QLabel('Client Secret:')
+        client_secret_label.setFixedWidth(80)
+        self.spotify_client_secret_input = QLineEdit()
+        self.spotify_client_secret_input.setPlaceholderText('Enter Spotify Client Secret')
+        self.spotify_client_secret_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.spotify_client_secret_input.setText(self.spotify_client_secret)
+        self.spotify_client_secret_input.textChanged.connect(self.save_spotify_credentials)
+        client_secret_layout.addWidget(client_secret_label)
+        client_secret_layout.addWidget(self.spotify_client_secret_input)
+        spotify_layout.addLayout(client_secret_layout)
+        
+        # Help text
+        help_text = QLabel('Get credentials at: <a href="https://developer.spotify.com/dashboard">developer.spotify.com/dashboard</a>')
+        help_text.setOpenExternalLinks(True)
+        help_text.setStyleSheet("color: gray; font-size: 10px; margin-top: 3px;")
+        spotify_layout.addWidget(help_text)
+        
+        settings_layout.addWidget(spotify_group)
+        
         settings_layout.addStretch()
         settings_tab.setLayout(settings_layout)
         self.tab_widget.addTab(settings_tab, "Settings")
@@ -1360,6 +1528,22 @@ class SpotiFLACGUI(QWidget):
         if self.tracks:
             self.update_track_list_display()
     
+    def save_spotify_credentials(self):
+        """Save Spotify API credentials"""
+        self.spotify_client_id = self.spotify_client_id_input.text().strip()
+        self.spotify_client_secret = self.spotify_client_secret_input.text().strip()
+        self.settings.setValue('spotify_client_id', self.spotify_client_id)
+        self.settings.setValue('spotify_client_secret', self.spotify_client_secret)
+        self.settings.sync()
+        # Enable fetch button if both credentials are filled and button is disabled
+        if (
+            self.spotify_client_id
+            and self.spotify_client_secret
+            and hasattr(self, "fetch_btn")
+            and not self.fetch_btn.isEnabled()
+        ):
+            self.fetch_btn.setEnabled(True)
+    
     def save_settings(self):
         self.settings.setValue('output_path', self.output_dir.text().strip())
         self.settings.sync()
@@ -1368,6 +1552,463 @@ class SpotiFLACGUI(QWidget):
     def update_timer(self):
         self.elapsed_time = self.elapsed_time.addSecs(1)
         self.time_label.setText(self.elapsed_time.toString("hh:mm:ss"))
+        
+
+    def fetch_spotify_account(self):
+        """Fetch user's playlists from Spotify account"""
+        client_id = self.settings.value('spotify_client_id', '')
+        client_secret = self.settings.value('spotify_client_secret', '')
+        
+        if not client_id or not client_secret:
+            # Prompt for credentials
+            self.log_output.append('Error: Spotify credentials not configured.')
+            self.log_output.append('Please enter your Spotify Client ID and Client Secret in the Settings tab.')
+            self.log_output.append('Get credentials at: https://developer.spotify.com/dashboard')
+            self.tab_widget.setCurrentWidget(self.process_tab)
+            return
+        
+        try:
+            self.reset_state()
+            self.reset_ui()
+            
+            self.log_output.append('Fetching your Spotify playlists...')
+            self.tab_widget.setCurrentWidget(self.process_tab)
+            # Show indeterminate progress during playlist fetch
+            self.progress_bar.setRange(0, 0)
+            self.progress_bar.show()
+            
+            self.playlist_fetch_worker = SpotifyPlaylistFetchWorker(client_id, client_secret)
+            self.playlist_fetch_worker.finished.connect(self.on_playlists_fetched)
+            self.playlist_fetch_worker.progress.connect(self.on_spotify_fetch_progress)
+            self.playlist_fetch_worker.error.connect(self.on_playlist_fetch_error)
+            self.playlist_fetch_worker.start()
+            
+        except Exception as e:
+            self.log_output.append(f'Error: Failed to start playlist fetch: {str(e)}')
+    
+    def on_playlists_fetched(self, playlists, user_info):
+        """Handle fetched playlists"""
+        try:
+            self.log_output.append(f"Fetched {len(playlists)} playlists for {user_info.get('display_name', 'user')}")
+            # Hide progress bar after fetch completes
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(100)
+            self.progress_bar.hide()
+            
+            # Show playlist tree, hide track list
+            self.track_list.hide()
+            self.playlist_tree.show()
+            if hasattr(self, 'playlist_fetch_controls'):
+                self.playlist_fetch_controls.show()
+            # Hide global track action buttons and search when browsing playlists
+            self.hide_track_buttons()
+            if hasattr(self, 'search_widget'):
+                self.search_widget.hide()
+            self.playlist_tree.clear()
+            
+            # Add "Liked Songs" as first item
+            liked_item = QTreeWidgetItem(['💚 Liked Songs'])
+            liked_item.setData(0, Qt.ItemDataRole.UserRole, {'type': 'liked_songs'})
+            self.playlist_tree.addTopLevelItem(liked_item)
+            
+            # Add all playlists
+            for playlist in playlists:
+                playlist_name = playlist.get('name', 'Unknown Playlist')
+                track_count = playlist.get('tracks', {}).get('total', 0)
+                item_text = f"🎵 {playlist_name} ({track_count} tracks)"
+                
+                item = QTreeWidgetItem([item_text])
+                item.setData(0, Qt.ItemDataRole.UserRole, {
+                    'type': 'playlist',
+                    'id': playlist.get('id'),
+                    'name': playlist_name,
+                    'tracks': track_count,
+                    'owner': playlist.get('owner', {}).get('display_name', '')
+                })
+                self.playlist_tree.addTopLevelItem(item)
+            
+            # Update info widget
+            self.update_info_widget_account(user_info, len(playlists))
+            
+            self.tab_widget.setCurrentIndex(0)
+            
+        except Exception as e:
+            self.log_output.append(f'Error: {str(e)}')
+    
+    def on_playlist_fetch_error(self, error_message):
+        """Handle playlist fetch error"""
+        self.log_output.append(f'Error: {error_message}')
+        # Reset progress bar on error
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.hide()
+        self.tab_widget.setCurrentWidget(self.process_tab)
+    
+    def on_playlist_selected(self, item, column):
+        """Handle playlist selection from tree"""
+        self.start_playlist_fetch_queue([item])
+    
+    def start_playlist_fetch_queue(self, items):
+        """Queue and sequentially fetch selected playlist items"""
+        if not items:
+            return
+        
+        # Prepare queue of playlist data dicts
+        self._playlist_fetch_queue = []
+        for item in items:
+            data = item.data(0, Qt.ItemDataRole.UserRole)
+            if data:
+                self._playlist_fetch_queue.append(data)
+        
+        if not self._playlist_fetch_queue:
+            return
+        
+        # Determine if this is a multi-playlist fetch session
+        self._collecting_multiple_playlists = len(self._playlist_fetch_queue) > 1
+        if self._collecting_multiple_playlists:
+            # Use internal results tabs inside Dashboard
+            while self.playlist_results_tabs.count() > 0:
+                self.playlist_results_tabs.removeTab(0)
+            self.playlist_results_tabs.show()
+            self.track_list.hide()
+            self.hide_track_buttons()
+            if hasattr(self, 'playlist_fetch_controls'):
+                self.playlist_fetch_controls.hide()
+            if hasattr(self, 'info_widget'):
+                self.info_widget.hide()
+        
+        self.log_output.clear()
+        self.log_output.append("Fetching tracks...")
+        self.tab_widget.setCurrentWidget(self.process_tab)
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.show()
+        
+        self._fetch_next_playlist_from_queue()
+
+    def _fetch_next_playlist_from_queue(self):
+        if not hasattr(self, '_playlist_fetch_queue') or not self._playlist_fetch_queue:
+            # Done
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(0)
+            self.progress_bar.hide()
+            return
+        
+        data = self._playlist_fetch_queue.pop(0)
+        client_id = self.settings.value('spotify_client_id', '')
+        client_secret = self.settings.value('spotify_client_secret', '')
+        
+        if data['type'] == 'liked_songs':
+            self.liked_songs_worker = SpotifyPlaylistTracksWorker(client_id, client_secret, None)
+            self.liked_songs_worker.finished.connect(self._on_queue_playlist_tracks_fetched)
+            self.liked_songs_worker.progress.connect(self.on_spotify_fetch_progress)
+            self.liked_songs_worker.error.connect(self._on_queue_playlist_tracks_error)
+            
+            def fetch_liked():
+                try:
+                    spotify = Spotify(client_id, client_secret)
+                    tracks = spotify.get_user_tracks()
+                    user = spotify.get_user()
+                    playlist_info = {
+                        'name': 'Liked Songs',
+                        'owner': {'display_name': user.get('display_name', '')},
+                        'tracks': {'total': len(tracks)},
+                        'images': [{'url': ''}]
+                    }
+                    self.liked_songs_worker.finished.emit(tracks, playlist_info)
+                except Exception as e:
+                    self.liked_songs_worker.error.emit(str(e))
+            
+            self.liked_songs_worker.run = fetch_liked
+            self.liked_songs_worker.start()
+            self.current_playlist_id = None
+        elif data['type'] == 'playlist':
+            playlist_id = data['id']
+            self.current_playlist_id = playlist_id
+            
+            self.playlist_tracks_worker = SpotifyPlaylistTracksWorker(client_id, client_secret, playlist_id)
+            self.playlist_tracks_worker.finished.connect(self._on_queue_playlist_tracks_fetched)
+            self.playlist_tracks_worker.progress.connect(self.on_spotify_fetch_progress)
+            self.playlist_tracks_worker.error.connect(self._on_queue_playlist_tracks_error)
+            self.playlist_tracks_worker.start()
+
+    def _on_queue_playlist_tracks_fetched(self, tracks, playlist_info):
+        # Reuse existing handler to display tracks
+        self.on_playlist_tracks_fetched(tracks, playlist_info)
+        # After finishing this, continue to next one
+        self._fetch_next_playlist_from_queue()
+
+    def _on_queue_playlist_tracks_error(self, error_message):
+        self.on_playlist_tracks_error(error_message)
+        # Continue to next even on error
+        self._fetch_next_playlist_from_queue()
+
+    def fetch_selected_playlists(self):
+        items = self.playlist_tree.selectedItems()
+        self.start_playlist_fetch_queue(items)
+
+    def fetch_all_playlists(self):
+        items = [self.playlist_tree.topLevelItem(i) for i in range(self.playlist_tree.topLevelItemCount())]
+        self.start_playlist_fetch_queue(items)
+    def on_playlist_tracks_fetched(self, tracks, playlist_info):
+        """Handle fetched playlist tracks"""
+        try:
+            # Hide progress bar once tracks are loaded
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(100)
+            self.progress_bar.hide()
+            # Build Track objects
+            built_tracks = []
+            for idx, item in enumerate(tracks, 1):
+                track_data = item.get('track', item)
+                if not track_data or track_data.get('is_local'):
+                    continue
+                built_tracks.append(Track(
+                    external_urls=track_data.get('external_urls', {}).get('spotify', ''),
+                    title=track_data.get('name', 'Unknown'),
+                    artists=', '.join([artist['name'] for artist in track_data.get('artists', [])]),
+                    album=track_data.get('album', {}).get('name', 'Unknown'),
+                    track_number=idx,
+                    duration_ms=track_data.get('duration_ms', 0),
+                    id=track_data.get('id', ''),
+                    isrc=track_data.get('external_ids', {}).get('isrc', ''),
+                    release_date=track_data.get('album', {}).get('release_date', '')
+                ))
+
+            if getattr(self, '_collecting_multiple_playlists', False):
+                # Create a dashboard-like tab inside the Dashboard's internal tab widget
+                self.playlist_tree.hide()
+                if hasattr(self, 'playlist_fetch_controls'):
+                    self.playlist_fetch_controls.hide()
+                self.search_widget.hide()
+                if hasattr(self, 'info_widget'):
+                    self.info_widget.hide()
+                self._add_playlist_results_tab(playlist_info, built_tracks)
+                self.log_output.append(f"Loaded {len(built_tracks)} tracks from playlist '{playlist_info.get('name', 'Playlist')}'")
+                self.tab_widget.setCurrentIndex(0)
+            else:
+                # Single playlist behavior (existing)
+                self.tracks = built_tracks
+                self.all_tracks = built_tracks.copy()
+                self.is_playlist = True
+                self.is_album = False
+                self.is_single_track = False
+                self.album_or_playlist_name = playlist_info.get('name', 'Playlist')
+                
+                self.playlist_tree.hide()
+                if hasattr(self, 'playlist_fetch_controls'):
+                    self.playlist_fetch_controls.hide()
+                self.track_list.show()
+                self.search_widget.show()
+                
+                self.update_track_list_display()
+                self.update_button_states()
+                
+                metadata = {
+                    'title': playlist_info.get('name', 'Playlist'),
+                    'artists': playlist_info.get('owner', {}).get('display_name', 'Unknown'),
+                    'cover': playlist_info.get('images', [{}])[0].get('url', '') if playlist_info.get('images') else '',
+                    'total_tracks': len(self.tracks)
+                }
+                self.update_info_widget_playlist(metadata)
+                
+                self.log_output.append(f"Loaded {len(self.tracks)} tracks from playlist")
+                self.tab_widget.setCurrentIndex(0)
+            
+        except Exception as e:
+            self.log_output.append(f'Error processing tracks: {str(e)}')
+    
+    def on_playlist_tracks_error(self, error_message):
+        """Handle playlist tracks fetch error"""
+        self.log_output.append(f'Error: {error_message}')
+        # Reset progress bar on error
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(100)
+        self.progress_bar.hide()
+        self.tab_widget.setCurrentWidget(self.process_tab)
+
+    def on_spotify_fetch_progress(self, percent):
+        # Switch to determinate and set value
+        if self.progress_bar.isHidden():
+            self.progress_bar.show()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(max(0, min(100, int(percent))))
+    
+    def update_info_widget_account(self, user_info, playlist_count):
+        """Update info widget for account view"""
+        self.title_label.setText(f"{user_info.get('display_name', 'Spotify Account')}")
+        self.followers_label.setText(f"<b>Playlists:</b> {playlist_count}")
+        self.followers_label.show()
+        self.release_date_label.hide()
+        self.type_label.setText("<b>Account</b> • Select a playlist to view tracks")
+        
+        # Load user profile image if available
+        images = user_info.get('images', [])
+        if images:
+            self.network_manager.get(QNetworkRequest(QUrl(images[0]['url'])))
+        
+        self.info_widget.show()
+
+    def _add_playlist_results_tab(self, playlist_info, tracks):
+        """Create a dashboard-like tab inside the Dashboard for a playlist"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(6, 6, 6, 6)
+
+        # Info header with search aligned to the right of the track count
+        header = QWidget()
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 6, 6)
+        
+        left_col = QWidget()
+        left_layout = QVBoxLayout(left_col)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        title = QLabel(playlist_info.get('name', 'Playlist'))
+        owner = QLabel(f"<b>Owner:</b> {playlist_info.get('owner', {}).get('display_name', 'Unknown')}")
+        left_layout.addWidget(title)
+        left_layout.addWidget(owner)
+        
+        right_row = QWidget()
+        right_layout = QHBoxLayout(right_row)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        count = QLabel(f"<b>Tracks:</b> {len(tracks)}")
+        tab.search_input = QLineEdit()
+        tab.search_input.setPlaceholderText("Search...")
+        tab.search_input.setClearButtonEnabled(True)
+        tab.search_input.setFixedWidth(250)
+        right_layout.addWidget(count)
+        right_layout.addSpacing(8)
+        right_layout.addWidget(tab.search_input)
+        
+        # Top-left for title/owner, top-right for count + search
+        header_layout.addWidget(left_col, 1, Qt.AlignmentFlag.AlignTop)
+        header_layout.addWidget(right_row, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+        layout.addWidget(header)
+
+        # Track list
+        list_widget = QListWidget()
+        list_widget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        # initial population
+        for i, track in enumerate(tracks, 1):
+            minutes = track.duration_ms // 60000
+            seconds = (track.duration_ms % 60000) // 1000
+            duration = f"{minutes}:{seconds:02d}"
+            display_text = f"{i}. {track.title} - {track.artists} • {duration}"
+            item = QListWidgetItem(display_text)
+            item.setData(Qt.ItemDataRole.UserRole, track)
+            list_widget.addItem(item)
+        layout.addWidget(list_widget)
+
+        # Per-tab controls (Download Selected / All)
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        download_selected_btn = QPushButton('Download Selected')
+        download_all_btn = QPushButton('Download All')
+        for btn in [download_selected_btn, download_all_btn]:
+            btn.setMinimumWidth(120)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        download_selected_btn.clicked.connect(self.download_selected_from_current_tab)
+        download_all_btn.clicked.connect(self.download_all_from_current_tab)
+        btn_row.addStretch()
+        btn_row.addWidget(download_selected_btn)
+        btn_row.addSpacing(8)
+        btn_row.addWidget(download_all_btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        # Store references on the tab
+        tab.list_widget = list_widget
+        tab.tracks = tracks
+        tab.playlist_name = playlist_info.get('name', 'Playlist')
+        # Hook up filtering
+        tab.search_input.textChanged.connect(lambda text, t=tab: self._filter_results_tab(t, text))
+        # Add to internal Dashboard tabs
+        self.playlist_results_tabs.addTab(tab, playlist_info.get('name', 'Playlist'))
+
+    def _filter_results_tab(self, tab, text):
+        """Filter the given results tab by text, matching title or artist"""
+        list_widget = tab.list_widget
+        list_widget.clear()
+        query = (text or '').strip().lower()
+        filtered = []
+        for track in tab.tracks:
+            hay = f"{track.title} {track.artists}".lower()
+            if not query or query in hay:
+                filtered.append(track)
+        for i, track in enumerate(filtered, 1):
+            minutes = track.duration_ms // 60000
+            seconds = (track.duration_ms % 60000) // 1000
+            duration = f"{minutes}:{seconds:02d}"
+            display_text = f"{i}. {track.title} - {track.artists} • {duration}"
+            item = QListWidgetItem(display_text)
+            item.setData(Qt.ItemDataRole.UserRole, track)
+            list_widget.addItem(item)
+
+    def download_selected_from_current_tab(self):
+        if not hasattr(self, 'playlist_results_tabs') or self.playlist_results_tabs.isHidden():
+            return
+        current_tab = self.playlist_results_tabs.currentWidget()
+        if not current_tab or not hasattr(current_tab, 'list_widget'):
+            return
+        selected_items = current_tab.list_widget.selectedItems()
+        if not selected_items:
+            self.log_output.append('Warning: Please select tracks to download in the active tab.')
+            return
+        selected_indices = [current_tab.list_widget.row(item) for item in selected_items]
+        selected_tracks = [current_tab.tracks[i] for i in selected_indices]
+        self._start_download_for_collection(selected_tracks, current_tab.playlist_name)
+
+    def download_all_from_current_tab(self):
+        if not hasattr(self, 'playlist_results_tabs') or self.playlist_results_tabs.isHidden():
+            return
+        current_tab = self.playlist_results_tabs.currentWidget()
+        if not current_tab or not hasattr(current_tab, 'tracks'):
+            return
+        self._start_download_for_collection(current_tab.tracks, current_tab.playlist_name)
+
+    def _start_download_for_collection(self, tracks_to_download, collection_name):
+        # Build output path similarly to download_tracks
+        raw_outpath = self.output_dir.text().strip()
+        outpath = os.path.normpath(raw_outpath)
+        if not os.path.exists(outpath):
+            self.log_output.append('Warning: Invalid output directory.')
+            return
+        folder_name = re.sub(r'[<>:"/\\|?*]', '_', collection_name.strip())
+        outpath = os.path.join(outpath, folder_name)
+        os.makedirs(outpath, exist_ok=True)
+
+        # Start worker mirroring start_download_worker but with explicit flags for playlist collection
+        service = self.service_dropdown.currentData()
+        self.worker = DownloadWorker(
+            tracks_to_download,
+            outpath,
+            False,              # is_single_track
+            False,              # is_album
+            True,               # is_playlist
+            collection_name,
+            self.filename_format,
+            self.use_track_numbers,
+            self.use_artist_subfolders,
+            self.use_album_subfolders,
+            service,
+        )
+        self.worker.finished.connect(self.on_download_finished)
+        self.worker.progress.connect(self.update_progress)
+        self.worker.start()
+        self.start_timer()
+        self.update_ui_for_download_start()
+    
+    def update_info_widget_playlist(self, metadata):
+        """Update info widget for playlist view"""
+        self.title_label.setText(metadata['title'])
+        self.artists_label.setText(f"<b>Owner:</b> {metadata['artists']}")
+        self.followers_label.hide()
+        self.release_date_label.hide()
+        self.type_label.setText(f"<b>Playlist</b> • {metadata['total_tracks']} tracks")
+        
+        if metadata.get('cover'):
+            self.network_manager.get(QNetworkRequest(QUrl(metadata['cover'])))
+        
+        self.info_widget.show()
                         
     def fetch_tracks(self):
         url = self.spotify_url.text().strip()

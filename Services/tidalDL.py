@@ -1,6 +1,6 @@
 import re
 import time
-
+import os
 import requests
 from mutagen.flac import FLAC, Picture
 from mutagen.id3 import PictureType
