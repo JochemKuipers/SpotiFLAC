@@ -1,12 +1,14 @@
-from time import sleep
-from urllib.parse import urlparse, parse_qs
-import requests
+import base64
 import json
 import time
-import pyotp
-import base64
 from random import randrange
+from time import sleep
 from typing import Dict, Any, List, Tuple
+from urllib.parse import urlparse, parse_qs
+
+import pyotp
+import requests
+
 
 # https://github.com/visagenull/Spotify-Free
 def get_random_user_agent():
