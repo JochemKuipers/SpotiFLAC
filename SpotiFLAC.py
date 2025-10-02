@@ -9,7 +9,8 @@ from pathlib import Path
 import qdarktheme
 import requests
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QUrl, QTimer, QTime, QSettings, QSize
-from PyQt6.QtGui import QIcon, QTextCursor, QDesktopServices, QPixmap, QBrush
+from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QTextCursor, QDesktopServices, QPixmap, QBrush
+from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from PyQt6.QtWidgets import (
     QApplication, QListWidgetItem, QMessageBox, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
@@ -1712,13 +1713,13 @@ class SpotiFLACGUI(QWidget):
             def fetch_liked():
                 try:
                     spotify = Spotify(client_id, client_secret)
-                    tracks = spotify.get_user_tracks()
+                    tracks = spotify.get_user_tracks(progress_callback=self.liked_songs_worker.progress.emit)
                     user = spotify.get_user()
                     playlist_info = {
                         'name': 'Liked Songs',
                         'owner': {'display_name': user.get('display_name', '')},
                         'tracks': {'total': len(tracks)},
-                        'images': [{'url': ''}]
+                        'images': [{'url': 'Assets/liked_tracks.svg'}]
                     }
                     self.liked_songs_worker.finished.emit(tracks, playlist_info)
                 except Exception as e:
@@ -1851,6 +1852,23 @@ class SpotiFLACGUI(QWidget):
         images = user_info.get('images', [])
         if images:
             self.network_manager.get(QNetworkRequest(QUrl(images[0]['url'])))
+        else:
+            # Show first letter of username in a colored block if no profile image
+            display_name = user_info.get('display_name', 'U')
+            first_letter = display_name[0].upper() if display_name else 'U'
+            # Create a pixmap with background color #AE96C1 and the letter, sized for 80x80 box
+            size = 80  # px
+            pixmap = QPixmap(size, size)
+            pixmap.fill(QColor("#AE96C1"))
+            painter = QPainter(pixmap)
+            font = QFont()
+            font.setBold(True)
+            font.setPointSize(40)
+            painter.setFont(font)
+            painter.setPen(Qt.GlobalColor.white)
+            painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, first_letter)
+            painter.end()
+            self.cover_label.setPixmap(pixmap)
         
         self.info_widget.show()
 
@@ -2012,7 +2030,18 @@ class SpotiFLACGUI(QWidget):
         self.type_label.setText(f"<b>Playlist</b> • {metadata['total_tracks']} tracks")
         
         if metadata.get('cover'):
-            self.network_manager.get(QNetworkRequest(QUrl(metadata['cover'])))
+            if metadata['cover'].startswith('Assets/'):
+                # Use QSvgRenderer for proper SVG rendering at high resolution
+                renderer = QSvgRenderer(metadata['cover'])
+                if renderer.isValid():
+                    pixmap = QPixmap(80, 80)
+                    pixmap.fill(Qt.GlobalColor.transparent)
+                    painter = QPainter(pixmap)
+                    renderer.render(painter)
+                    painter.end()
+                    self.cover_label.setPixmap(pixmap)
+            else:
+                self.network_manager.get(QNetworkRequest(QUrl(metadata['cover'])))
         
         self.info_widget.show()
                         

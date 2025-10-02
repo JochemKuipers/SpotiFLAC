@@ -26,8 +26,8 @@ class TrackFetchWorker(QThread):
             
 class PlaylistTrackFetchWorker(QThread):
     """Worker thread for fetching a batch of tracks at a specific offset"""
-    finished = pyqtSignal(list, int)  # tracks, offset
-    error = pyqtSignal(str, int)  # error message, offset
+    finished = pyqtSignal(list, int)
+    error = pyqtSignal(str, int)
     
     def __init__(self, sp_client, playlist_id, offset, limit=50, market='US'):
         super().__init__()
@@ -51,7 +51,7 @@ class Spotify:
         self.client_id = client_id
         self.client_secret = client_secret
         self.scope = ['user-library-read', 'playlist-read-private', 'playlist-read-collaborative']
-        self.auth_manager = spotipy.oauth2.SpotifyOAuth(client_id=self.client_id, client_secret=self.client_secret, scope=self.scope, redirect_uri='http://127.0.0.1:3000/callback')
+        self.auth_manager = spotipy.oauth2.SpotifyOAuth(client_id=self.client_id, client_secret=self.client_secret, scope=self.scope, redirect_uri='http://127.0.0.1:3000/callback', cache_path='.cache')
         self.sp = spotipy.Spotify(auth_manager=self.auth_manager)
         self.market = 'US'  # Default market, will be updated when user is fetched
     
