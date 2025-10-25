@@ -698,13 +698,13 @@ class ServiceComboBox(QComboBox):
             {
                 "id": "tidal",
                 "name": "Tidal",
-                "icon": "icons/tidal.png",
+                "icon": "Assets/tidal.png",
                 "online": False,
             },
             {
                 "id": "deezer",
                 "name": "Deezer",
-                "icon": "icons/deezer.png",
+                "icon": "Assets/deezer.png",
                 "online": False,
             },
         ]
@@ -904,7 +904,7 @@ class SpotiFLACGUI(QWidget):
         self.track_list.show()
 
     def get_themed_icon(self, icon_name):
-        icon_path = os.path.join(os.path.dirname(__file__), "icons", icon_name)
+        icon_path = os.path.join(os.path.dirname(__file__), "Assets", icon_name)
         if not os.path.exists(icon_path):
             return QIcon()
 
@@ -928,7 +928,7 @@ class SpotiFLACGUI(QWidget):
         self.setFixedWidth(650)
         self.setMinimumHeight(350)
 
-        icon_path = os.path.join(os.path.dirname(__file__), "icons", "icon.svg")
+        icon_path = os.path.join(os.path.dirname(__file__), "Assets", "icon.svg")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
@@ -1256,16 +1256,16 @@ class SpotiFLACGUI(QWidget):
         self.single_delete_btn = QPushButton(" Delete")
         self.single_delete_btn.setIcon(self.get_themed_icon("trash.svg"))
 
-        for btn in [self.single_download_btn, self.single_clear_btn]:
+        for btn in [self.single_download_btn, self.single_delete_btn]:
             btn.setFixedWidth(120)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
 
         self.single_download_btn.clicked.connect(self.download_all)
-        self.single_clear_btn.clicked.connect(self.clear_tracks)
+        self.single_delete_btn.clicked.connect(self.clear_tracks)
 
         single_track_layout.addStretch()
         single_track_layout.addWidget(self.single_download_btn)
-        single_track_layout.addWidget(self.single_clear_btn)
+        single_track_layout.addWidget(self.single_delete_btn)
         single_track_layout.addStretch()
 
         self.single_track_container.hide()
@@ -2059,12 +2059,12 @@ class SpotiFLACGUI(QWidget):
             (
                 "Check for Updates",
                 "Check",
-                "https://github.com/afkarxyz/SpotiFLAC/releases",
+                "https://github.com/JochemKuipers/SpotiFLAC/releases",
             ),
             (
                 "Report an Issue",
                 "Report",
-                "https://github.com/afkarxyz/SpotiFLAC/issues",
+                "https://github.com/JochemKuipers/SpotiFLAC/issues",
             ),
         ]
 
