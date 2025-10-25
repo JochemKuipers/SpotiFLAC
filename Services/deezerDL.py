@@ -171,7 +171,7 @@ class DeezerDownloader:
                 print("No FLAC download link found in API response")
                 return False
 
-            print(f"Successfully obtained FLAC download URL")
+            print("Successfully obtained FLAC download URL")
 
         except Exception as e:
             print(f"Error getting download URL from API: {e}")

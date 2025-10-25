@@ -460,7 +460,7 @@ class DownloadWorker(QThread):
                             downloader.get_track_info(track_id, self.service)
                         )
                         self.progress.emit(
-                            f"Track info received, starting download process", 0
+                            "Track info received, starting download process", 0
                         )
 
                         is_paused_callback = lambda: self.is_paused
@@ -859,7 +859,7 @@ class SpotiFLACGUI(QWidget):
                             QUrl("https://github.com/JochemKuipers/SpotiFLAC/releases")
                         )
 
-        except Exception as e:
+        except Exception:
             pass
 
     @staticmethod
@@ -3539,7 +3539,7 @@ if __name__ == "__main__":
             sys.stderr = io.TextIOWrapper(
                 sys.stderr.buffer, encoding="utf-8", errors="replace"
             )
-    except Exception as e:
+    except Exception:
         pass
 
     app = QApplication(sys.argv)
