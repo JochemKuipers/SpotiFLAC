@@ -18,7 +18,6 @@ def get_random_user_agent():
 # https://github.com/xyloflake/spot-secrets-go
 def generate_totp():
     local_path = Path.home() / ".spotify-secret" / "secretBytes.json"
-    used_local = False
 
     try:
         url = "https://raw.githubusercontent.com/afkarxyz/secretBytes/refs/heads/main/secrets/secretBytes.json"
@@ -31,7 +30,6 @@ def generate_totp():
             if local_path.exists():
                 with open(local_path, "r") as f:
                     secrets_list = json.load(f)
-                used_local = True
             else:
                 raise Exception(
                     f"GitHub failed ({github_error}) and no local file found at {local_path}"
@@ -135,12 +133,12 @@ def parse_uri(uri):
     if len(parts) > 1 and parts[1].startswith("intl-"):
         parts = parts[1:]
 
-    l = len(parts)
-    if l == 3 and parts[1] in ["album", "track", "playlist", "artist"]:
+    length = len(parts)
+    if length == 3 and parts[1] in ["album", "track", "playlist", "artist"]:
         return {"type": parts[1], "id": parts[2]}
-    if l == 5 and parts[3] == "playlist":
+    if length == 5 and parts[3] == "playlist":
         return {"type": parts[3], "id": parts[4]}
-    if l >= 4 and parts[1] == "artist" and len(parts) >= 4:
+    if length >= 4 and parts[1] == "artist" and len(parts) >= 4:
         if parts[3] == "discography":
             discography_type = "all"
             if len(parts) >= 5 and parts[4] in [
@@ -526,7 +524,7 @@ def format_album_data(album_data):
                 )
                 if full_track_data:
                     track_isrc = full_track_data.get("external_ids", {}).get("isrc", "")
-            except:
+            except Exception:
                 pass
 
         track_list.append(
@@ -697,7 +695,7 @@ def format_artist_discography_data(discography_data):
                                     track_isrc = full_track_data.get(
                                         "external_ids", {}
                                     ).get("isrc", "")
-                            except:
+                            except Exception:
                                 pass
 
                         formatted_track = {

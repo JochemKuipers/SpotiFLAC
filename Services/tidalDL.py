@@ -138,7 +138,7 @@ class TidalDownloader:
             else:
                 return None
 
-        except:
+        except Exception:
             return None
 
     def search_tracks(self, query):
@@ -315,7 +315,7 @@ class TidalDownloader:
                     if os.path.exists(temp_filepath):
                         try:
                             os.remove(temp_filepath)
-                        except:
+                        except Exception:
                             pass
                     raise Exception(
                         f"Download error after {self.max_retries} retries: {str(e)}"
@@ -404,7 +404,7 @@ class TidalDownloader:
                 audio["DATE"] = album_info["releaseDate"][:4]
                 try:
                     audio["YEAR"] = album_info["releaseDate"][:4]
-                except:
+                except Exception:
                     pass
 
             if track_info.get("genre"):
@@ -580,9 +580,9 @@ if __name__ == "__main__":
             os.system("chcp 65001 > nul")
             try:
                 sys.stdout.reconfigure(encoding="utf-8")
-            except:
+            except Exception:
                 pass
-    except:
+    except Exception:
         pass
 
     main()

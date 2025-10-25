@@ -254,9 +254,9 @@ if __name__ == "__main__":
             os.system("chcp 65001 > nul")
             try:
                 sys.stdout.reconfigure(encoding="utf-8")
-            except:
+            except Exception:
                 pass
-    except:
+    except Exception:
         pass
 
     asyncio.run(main())

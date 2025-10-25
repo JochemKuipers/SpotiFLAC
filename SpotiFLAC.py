@@ -340,8 +340,12 @@ class DownloadWorker(QThread):
                             f"Searching and downloading from Tidal for ISRC: {track.isrc} - {track.title} - {track.artists}",
                             0,
                         )
-                        is_paused_callback = lambda: self.is_paused
-                        is_stopped_callback = lambda: self.is_stopped
+
+                        def is_paused_callback():
+                            return self.is_paused
+
+                        def is_stopped_callback():
+                            return self.is_stopped
 
                         auto_fallback = self.tidal_api_url == "auto"
 
@@ -361,7 +365,7 @@ class DownloadWorker(QThread):
                             downloaded_file = download_result_details
                         elif (
                             isinstance(download_result_details, dict)
-                            and download_result_details.get("success") == False
+                            and not download_result_details.get("success")
                             and download_result_details.get("error")
                             == "Download stopped by user"
                         ):
@@ -369,10 +373,9 @@ class DownloadWorker(QThread):
                                 f"Download stopped by user for: {track.title}", 0
                             )
                             return
-                        elif (
-                            isinstance(download_result_details, dict)
-                            and download_result_details.get("success") == False
-                        ):
+                        elif isinstance(
+                            download_result_details, dict
+                        ) and not download_result_details.get("success"):
                             raise Exception(
                                 download_result_details.get(
                                     "error", "Tidal download failed"
@@ -463,8 +466,11 @@ class DownloadWorker(QThread):
                             "Track info received, starting download process", 0
                         )
 
-                        is_paused_callback = lambda: self.is_paused
-                        is_stopped_callback = lambda: self.is_stopped
+                        def is_paused_callback():
+                            return self.is_paused
+
+                        def is_stopped_callback():
+                            return self.is_stopped
 
                         downloaded_file = downloader.download(
                             metadata,
@@ -963,7 +969,7 @@ class SpotiFLACGUI(QWidget):
             self.spotify_url.setPlaceholderText("Account mode - textbox disabled")
             try:
                 self.fetch_btn.clicked.disconnect()
-            except:
+            except Exception:
                 pass
 
             # Check if Spotify credentials are filled in the settings
@@ -988,7 +994,7 @@ class SpotiFLACGUI(QWidget):
             self.spotify_url.setPlaceholderText("Enter Spotify URL")
             try:
                 self.fetch_btn.clicked.disconnect()
-            except:
+            except Exception:
                 pass
             self.fetch_btn.clicked.connect(self.fetch_tracks)
 
