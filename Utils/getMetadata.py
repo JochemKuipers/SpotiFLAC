@@ -1,33 +1,46 @@
-import base64
+from time import sleep
+from urllib.parse import urlparse, parse_qs
+from pathlib import Path
+import requests
 import json
 import time
-from random import randrange
-from time import sleep
-from typing import Dict, Any, List, Tuple
-from urllib.parse import urlparse, parse_qs
-
 import pyotp
-import requests
-
+import base64
+from random import randrange
+from typing import Dict, Any, List, Tuple
 
 # https://github.com/visagenull/Spotify-Free
 def get_random_user_agent():
     return f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_{randrange(11, 15)}_{randrange(4, 9)}) AppleWebKit/{randrange(530, 537)}.{randrange(30, 37)} (KHTML, like Gecko) Chrome/{randrange(80, 105)}.0.{randrange(3000, 4500)}.{randrange(60, 125)} Safari/{randrange(530, 537)}.{randrange(30, 36)}"
 
+# https://github.com/xyloflake/spot-secrets-go
 def generate_totp():
-    url = "https://raw.githubusercontent.com/Thereallo1026/spotify-secrets/refs/heads/main/secrets/secretBytes.json"
+    local_path = Path.home() / ".spotify-secret" / "secretBytes.json"
+    used_local = False
     
     try:
+        url = "https://raw.githubusercontent.com/afkarxyz/secretBytes/refs/heads/main/secrets/secretBytes.json"
         resp = requests.get(url, timeout=10)
         if resp.status_code != 200:
-            raise Exception(f"Failed to fetch TOTP secrets from GitHub. Status: {resp.status_code}")
+            raise Exception(f"GitHub fetch failed with status: {resp.status_code}")
         secrets_list = resp.json()
-        
+    except Exception as github_error:
+        try:
+            if local_path.exists():
+                with open(local_path, 'r') as f:
+                    secrets_list = json.load(f)
+                used_local = True
+            else:
+                raise Exception(f"GitHub failed ({github_error}) and no local file found at {local_path}")
+        except Exception as local_error:
+            raise Exception(f"Failed to fetch secrets from both GitHub and local: {local_error}")
+    
+    try:
         latest_entry = max(secrets_list, key=lambda x: x["version"])
         version = latest_entry["version"]
         secret_cipher = latest_entry["secret"]
     except Exception as e:
-        raise Exception(f"Failed to fetch secrets from GitHub: {str(e)}")
+        raise Exception(f"Failed to process secrets: {str(e)}")
 
     processed = [byte ^ ((i % 33) + 9) for i, byte in enumerate(secret_cipher)]
     processed_str = "".join(map(str, processed))

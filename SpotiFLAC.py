@@ -21,7 +21,6 @@ from PyQt6.QtWidgets import (
 from packaging import version
 
 from Services.deezerDL import DeezerDownloader
-from Services.qobuzAutoDL import QobuzDownloader as QobuzAutoDownloader
 from Services.tidalDL import TidalDownloader
 from Services.spotify import Spotify
 from Utils.getMetadata import get_filtered_data, parse_uri, SpotifyInvalidUrlException

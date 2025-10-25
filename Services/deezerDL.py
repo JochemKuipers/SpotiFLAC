@@ -1,9 +1,9 @@
-import asyncio
-from random import randrange
-import os
 import requests
+import asyncio
+import os
+import sys
 from mutagen.flac import FLAC
-
+from random import randrange
 
 def get_random_user_agent():
     return f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_{randrange(11, 15)}_{randrange(4, 9)}) AppleWebKit/{randrange(530, 537)}.{randrange(30, 37)} (KHTML, like Gecko) Chrome/{randrange(80, 105)}.0.{randrange(3000, 4500)}.{randrange(60, 125)} Safari/{randrange(530, 537)}.{randrange(30, 36)}"
@@ -217,7 +217,7 @@ async def main():
     downloader = DeezerDownloader()
     
     isrc = "USAT22409172"
-    output_dir = ".."
+    output_dir = "."
     
     success = await downloader.download_by_isrc(isrc, output_dir)
     if success:

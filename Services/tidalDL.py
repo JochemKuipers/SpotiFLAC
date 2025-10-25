@@ -1,10 +1,11 @@
+import os
 import re
 import time
-import os
+import base64
 import requests
+import json
 from mutagen.flac import FLAC, Picture
 from mutagen.id3 import PictureType
-
 
 class ProgressCallback:
     def __call__(self, current, total):
@@ -15,19 +16,88 @@ class ProgressCallback:
             print(f"\r{current / (1024 * 1024):.2f} MB", end="")
 
 class TidalDownloader:
-    def __init__(self, timeout=30, max_retries=3):
+    def __init__(self, timeout=30, max_retries=3, api_url=None):
         self.timeout = timeout
         self.max_retries = max_retries
         self.download_chunk_size = 256 * 1024
         self.progress_callback = ProgressCallback()
-        self.client_id = "zU4XHVVkc2tDPo4t"
-        self.client_secret = "VJKhDFqJPqvsPVNBV6ukXTJmwlvbttP7wlMlrc72se4="
+        self.client_id = base64.b64decode("NkJEU1JkcEs5aHFFQlRnVQ==").decode()
+        self.client_secret = base64.b64decode("eGV1UG1ZN25icFo5SUliTEFjUTkzc2hrYTFWTmhlVUFxTjZJY3N6alRHOD0=").decode()
+        self.api_url = api_url or "https://hifi.401658.xyz"
+    
+    @staticmethod
+    def get_available_apis():
+        try:
+            response = requests.get("https://status.monochrome.tf/api/stream", timeout=10, stream=True)
+            
+            for line in response.iter_lines():
+                if line:
+                    line_str = line.decode('utf-8')
+                    if line_str.startswith('data: '):
+                        data = json.loads(line_str[6:])
+                        
+                        api_instances = [
+                            inst for inst in data.get('instances', [])
+                            if inst.get('instance_type') == 'api' and inst.get('last_check', {}).get('success')
+                        ]
+                        
+                        api_instances.sort(key=lambda x: x.get('avg_response_time', 9999))
+                        
+                        return api_instances
+                        
+        except Exception as e:
+            print(f"Failed to fetch API list: {e}")
+            return []
+    
+    @staticmethod
+    def select_api_interactive():
+        apis = TidalDownloader.get_available_apis()
+        
+        if not apis:
+            print("No APIs available, using default: https://hifi.401658.xyz")
+            return "https://hifi.401658.xyz"
+        
+        print("\n=== Available API Instances ===")
+        print(f"{'No':<4} {'URL':<40} {'Status':<8} {'Uptime':<8} {'Avg Response':<12}")
+        print("-" * 80)
+        
+        for i, api in enumerate(apis, 1):
+            url = api.get('url', 'N/A')
+            status = "UP" if api.get('last_check', {}).get('success') else "DOWN"
+            uptime = f"{api.get('uptime', 0):.1f}%"
+            avg_time = f"{api.get('avg_response_time', 0)}ms"
+            
+            print(f"{i:<4} {url:<40} {status:<8} {uptime:<8} {avg_time:<12}")
+        
+        print("\n0    Use default (https://hifi.401658.xyz)")
+        print("-" * 80)
+        
+        while True:
+            try:
+                choice = input(f"\nSelect API (0-{len(apis)}) [1 for fastest]: ").strip()
+                
+                if not choice:
+                    choice = "1"
+                
+                choice_num = int(choice)
+                
+                if choice_num == 0:
+                    return "https://hifi.401658.xyz"
+                elif 1 <= choice_num <= len(apis):
+                    selected_url = apis[choice_num - 1]['url']
+                    print(f"\nSelected: {selected_url}")
+                    return selected_url
+                else:
+                    print(f"Invalid choice. Please enter 0-{len(apis)}")
+            except ValueError:
+                print("Invalid input. Please enter a number.")
+            except KeyboardInterrupt:
+                print("\nUsing default API")
+                return "https://hifi.401658.xyz"
 
     def set_progress_callback(self, callback):
         self.progress_callback = callback
 
-
-    
     def sanitize_filename(self, filename):
         if not filename: 
             return "Unknown Track"
@@ -143,7 +213,7 @@ class TidalDownloader:
 
     def get_download_url(self, track_id, quality="LOSSLESS"):
         print("Fetching URL...")
-        download_api_url = f"https://tidal.401658.xyz/track/?id={track_id}&quality={quality}"
+        download_api_url = f"{self.api_url}/track/?id={track_id}&quality={quality}"
         
         try:
             response = requests.get(download_api_url, timeout=self.timeout)
@@ -183,6 +253,10 @@ class TidalDownloader:
             return None
 
     def download_file(self, url, filepath, is_paused_callback=None, is_stopped_callback=None):
+        file_dir = os.path.dirname(filepath)
+        if file_dir and not os.path.exists(file_dir):
+            os.makedirs(file_dir, exist_ok=True)
+        
         temp_filepath = filepath + ".part"
         retry_count = 0
         
@@ -315,13 +389,46 @@ class TidalDownloader:
             print(f"Error embedding metadata: {str(e)}")
             return False
 
-    def download(self, query, isrc=None, output_dir=".", quality="LOSSLESS", is_paused_callback=None, is_stopped_callback=None):
+    def download(self, query, isrc=None, output_dir=".", quality="LOSSLESS", is_paused_callback=None, is_stopped_callback=None, auto_fallback=False):
         if output_dir != ".":
             try:
                 os.makedirs(output_dir, exist_ok=True)
             except OSError as e:
                 raise Exception(f"Directory error: {e}")
-                
+        
+        if auto_fallback:
+            apis = self.get_available_apis()
+            if not apis:
+                print("No APIs available for fallback, using current API")
+                return self._download_single(query, isrc, output_dir, quality, is_paused_callback, is_stopped_callback)
+            
+            last_error = None
+            for i, api in enumerate(apis, 1):
+                api_url = api.get('url')
+                try:
+                    print(f"[Auto Fallback {i}/{len(apis)}] Trying: {api_url}")
+                    
+                    fallback_downloader = TidalDownloader(api_url=api_url)
+                    fallback_downloader.set_progress_callback(self.progress_callback)
+                    
+                    result = fallback_downloader._download_single(
+                        query, isrc, output_dir, quality, 
+                        is_paused_callback, is_stopped_callback
+                    )
+                    
+                    print(f"✓ Success with: {api_url}")
+                    return result
+                    
+                except Exception as e:
+                    last_error = str(e)
+                    print(f"✗ Failed with {api_url}: {last_error[:80]}")
+                    continue
+            
+            raise Exception(f"All {len(apis)} APIs failed. Last error: {last_error}")
+        
+        return self._download_single(query, isrc, output_dir, quality, is_paused_callback, is_stopped_callback)
+    
+    def _download_single(self, query, isrc, output_dir, quality, is_paused_callback, is_stopped_callback):
         track_info = self.get_track_info(query, isrc)
         track_id = track_info.get("id")
         
@@ -372,11 +479,13 @@ class TidalDownloader:
 
 def main():
     print("=== TidalDL - Tidal Downloader ===")
-    downloader = TidalDownloader(timeout=30, max_retries=3)
+    
+    selected_api = TidalDownloader.select_api_interactive()
+    downloader = TidalDownloader(timeout=30, max_retries=3, api_url=selected_api)
     
     query = "APT."
     isrc = "USAT22409172"
-    output_dir = ".."
+    output_dir = "."
     
     try:
         downloaded_file = downloader.download(query, isrc, output_dir)
